@@ -17,7 +17,7 @@ label <- substr(colnames(X.aug),1,3) #set the label
 #eset.mat is original data
 
 lab_con <- which(label%in%"Con")
-lab_tet <- which(label%in%"tet")
+
 
 nSample <- length(lab_con) #sum the sample number by groups
 
@@ -26,22 +26,9 @@ nfrom <- 0.02# linear interpolation start
 
 augx.M <- c()
 
-for(l in 1:2){
-  a <- list(lab_con,lab_tet)
-  nSample <- length(a[[l]])
-  if(l == 1){
-    if(nSample < 2){
-      next
-    }else{
-      index <- 1:(length(lab_con) - 1)}
-  }else{
-    if(nSample < 2){
-      next
-    }else{
-      index <- (length(lab_con)+1):(length(c(lab_con,lab_tet)) - 1)}
-  }
-  
-  combn.df <- t(combn(index,2))
+index <- lab_con
+
+combn.df <- t(combn(index,2))
   
   liner.index <- seq(nfrom,(1-nfrom),length.out=nliner)
   
@@ -62,7 +49,7 @@ for(l in 1:2){
     })
   })
   augx.M <- cbind(augx.M, as.matrix(augx.M.m))
-}
+
 
 
 rownames(augx.M)<- rownames(X.aug)
