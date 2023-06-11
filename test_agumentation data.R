@@ -1,4 +1,4 @@
-setwd("/Users/huachunyin/desktop/Xinqiao/tumor/NO/")
+
 
 test.mat <- openxlsx::read.xlsx("test.xlsx",rowNames=TRUE)
 
@@ -18,26 +18,13 @@ nfrom <- 0.02# linear interpolation start
 
 augx.M <- c()
 
-for(l in 1:2){
-  a <- list(lab_con,lab_tet)
-  nSample <- length(a[[l]])
-  if(l == 1){
-    if(nSample < 2){
-    next
-    }else{
-    index <- 1:(length(lab_con) - 1)}
-  }else{
-    if(nSample < 2){
-      next
-    }else{
-      index <- (length(lab_con)+1):(length(c(lab_con,lab_tet)) - 1)}
-  }
+index <- (length(lab_con)+1):(length(c(lab_con,lab_tet)))
+
+combn.df <- t(combn(index,2))
   
-  combn.df <- t(combn(index,2))
+liner.index <- seq(nfrom,(1-nfrom),length.out=nliner)
   
-  liner.index <- seq(nfrom,(1-nfrom),length.out=nliner)
-  
-  augx.M.m <- purrr::map_dfc(1:nrow(combn.df), .f = function(t){
+augx.M.m <- purrr::map_dfc(1:nrow(combn.df), .f = function(t){
     
     purrr::map_dfc(1:nliner, .f = function(r){
       
@@ -55,7 +42,7 @@ for(l in 1:2){
   }
   )
   augx.M <- cbind(augx.M, as.matrix(augx.M.m))
-}
+
 
 
 
@@ -95,8 +82,8 @@ ggplot(tsne,aes(tSNE1,tSNE2))+
   scale_color_lancet()+
   scale_color_manual(values=c("#99BFAB","#EBDEB3","#00468B","#F89B9B"))+
   theme_bw()+
-  xlim(-350,350)+
-  ylim(-300,300)+
+  xlim(-250,250)+
+  ylim(-200,200)+
   theme(plot.margin = unit(rep(1.5,4),"lines"),
         axis.title = element_blank(),
         axis.ticks = element_blank(),
@@ -124,15 +111,8 @@ input <- as.data.frame(input)
 #View(input)
 
 ##################
-
-#"N-Acetylaspartylglutamate (NAAG)-","Cytidine+","L-Pipecolic acid+",
-#"Acamprosate-" "3-Methylhistidine+","S-Methyl-5'-thioadenosine+", "Dodecanoic acid-",
-#"Linoleic acid-","L-Glutamate+","S-Methyl-5'-thioadenosine+",
  
-
-
-deg.cer<-c("N-Acetylaspartylglutamate (NAAG)-","Dodecanoic acid-",
-
+deg.cer<-c("N-Acetylaspartylglutamate (NAAG)-", "Dodecanoic acid-", 
             "β-HCG")
 
 sam.iris <- input[, c("sam.lab", deg.cer)]
@@ -238,19 +218,19 @@ pROC::ci.coords(res.roc, x="best", input = "threshold",best.policy="random",ret=
 
 ##############################
 
-dataAUC<-openxlsx::read.xlsx("agumentation_marker.xlsx")
+#dataAUC<-openxlsx::read.xlsx("agumentation_marker.xlsx")
 
-#######TOPSIS全称Technique for Order Preference by Similarity to an Ideal Solution
+#######Technique for Order Preference by Similarity to an Ideal Solution
 library(tibble)
 library(dplyr)
 library(readr)
 
-# 标准化变量值
+ 
 z_value <- function(x){
   x / sqrt(sum(x^2))
 }
 
-# 计算最优距离
+ 
 dist <-function(x, std){
   res <- c()
   for ( i in 1 : nrow(x)) {
@@ -261,12 +241,11 @@ dist <-function(x, std){
 }
 
 # load sample data
-
-# 按列对数据进行标准化
+ 
 
 dat_z <- dataAUC %>% dplyr::mutate(across(c(3:7), z_value))
 dat_z <- dat_z[,-1]
-## unlist 转换tibble为vector
+ 
 z_max <- dat_z %>% summarise(across(c(2:6), max)) %>% unlist
 z_min <- dat_z %>% summarise(across(c(2:6), min)) %>% unlist
 
@@ -274,7 +253,6 @@ z_min <- dat_z %>% summarise(across(c(2:6), min)) %>% unlist
 du <- dist(dat_z, z_max)
 dn <- dist(dat_z, z_min)
 
-# 计算CI并按照降序排序
 dat_z <- dat_z %>% add_column(du = du, dn = dn) %>% 
   mutate(ci= dn/(du+dn)) %>%
   arrange(-ci)
