@@ -6,7 +6,7 @@
   if (!require("e1071")) install.packages("e1071")
   library(pROC)
 
-  df <-readRDS("df.rds")
+  df <-readRDS("df.rds") # download from https://github.com/HuaChunY/A-multi-step-machine-learning-method-Metabee/blob/main/df.rds
   
   label <- substr(rownames(df),1,3)
  
