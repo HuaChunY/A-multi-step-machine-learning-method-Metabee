@@ -1,7 +1,7 @@
 ################################################################################
-#    &&&....&&&    % Project: A multi-step machine learning method-Metabee     #
+#    &&&....&&&    % 
 #  &&&&&&..&&&&&&  % Author: Bo Li, Huachun Yin, Jingxin Tao   
-#  &&&&&&&&&&&&&&  % Date: Mar. 1st, 2022                                      #
+#  &&&&&&&&&&&&&&  % Date: Mar. 1st, 2024                                      #
 #   &&&&&&&&&&&&   %                                                           #
 #     &&&&&&&&     % Environment: R version 3.5.3;                             #
 #       &&&&       % Platform: x86_64-pc-linux-gnu (64-bit)                    #
@@ -21,22 +21,33 @@
 if (!requireNamespace("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
 
+if (!require("edgeR")) BiocManager::install("edgeR")
 if (!require("preprocessCore")) BiocManager::install("preprocessCore")
+if (!require("meta")) install.packages("meta")
 if (!require("e1071")) install.packages("e1071")
 if (!require("coin")) install.packages("coin")
- 
+if (!require("ggsci")) install.packages("ggsci")
+
 library(preprocessCore)
+library(compcodeR)
+library(meta)
 library(e1071)
 library(coin)
+library(venn)
+library(ggsci)
+library(preprocessCore)
 library(FSA)
 library(pROC)
-library(DT)
-library(tibble)
-library(dplyr)
-library(readr)
-library(ropls)
+library(simpleaffy)
+library(RankProd)
+library(bspec)
+library(netClass)
+library(tidyverse)
+library(FSinR)
+library(stringr)
+
 ### ------------------------------------------------------------------------ ###
-### Function-01. A set of SVM-RFE functions for feature selection. 
+### Function-01. A set of SVM-RFE functions for gene selection. 
 ### Note: derived from johncolby/SVM-RFE/msvmRFE.R in Github. 
 
 #++ Function-1.1 svmRFE.wrap
@@ -56,47 +67,48 @@ svmRFE.wrap <- function(test.fold, X, ...) {
 
 svmRFE <- function(X, k = 1, halve.above = 5000) {
   # Feature selection with Multiple SVM Recursive Feature Elimination (RFE) algorithm
-  n = ncol(X) - 1
+  n <- ncol(X) - 1
   
   # Scale data up front so it doesn't have to be redone each pass
   cat('Scaling data...')
-  X[, -1] = scale(X[, -1])
+  X[, -1] <- scale(X[, -1])
   cat('Done!\n')
   flush.console()
   
-  pb = txtProgressBar(1, n, 1, style=3)
+  pb <- txtProgressBar(1, n, 1, style=3)
   
-  i.surviving = 1:n
-  i.ranked    = n
-  ranked.list = vector(length=n)
+  i.surviving <- 1:n
+  i.ranked <- n
+  ranked.list <- vector(length=n)
   
   # Recurse through all the features
   while(length(i.surviving) > 0) {
     if(k > 1) {
+      set.seed(78)
       # Subsample to obtain multiple weights vectors (i.e. mSVM-RFE)            
-      folds = rep(1:k, len=nrow(X))[sample(nrow(X))]
-      folds = lapply(1:k, function(x) which(folds == x))
+      folds <- rep(1:k, len=nrow(X))[sample(nrow(X))]
+      folds <- lapply(1:k, function(x) which(folds == x))
       
       # Obtain weights for each training set
-      w = lapply(folds, getWeights, X[, c(1, 1+i.surviving)])
-      w = do.call(rbind, w)
+      w <- lapply(folds, getWeights, X[, c(1, 1+i.surviving)])
+      w <- do.call(rbind, w)
       
       # Normalize each weights vector
-      w = t(apply(w, 1, function(x) x / sqrt(sum(x^2))))
+      w <- t(apply(w, 1, function(x) x / sqrt(sum(x^2))))
       
       # Compute ranking criteria
-      v    = w * w
-      vbar = apply(v, 2, mean)
-      vsd  = apply(v, 2, sd)
-      c    = vbar / vsd
+      v <- w * w
+      vbar <- apply(v, 2, mean)
+      vsd <- apply(v, 2, sd)
+      c <- vbar / vsd
     } else {
       # Only do 1 pass (i.e. regular SVM-RFE)
-      w = getWeights(NULL, X[, c(1, 1+i.surviving)])
-      c = w * w
+      w <- getWeights(NULL, X[, c(1, 1+i.surviving)])
+      c <- w * w
     }
     
     # Rank the features
-    ranking = sort(c, index.return=T)$ix
+    ranking <- sort(c, index.return=T)$ix
     if(length(i.surviving) == 1) {
       ranking = 1
     }
@@ -108,7 +120,7 @@ svmRFE <- function(X, k = 1, halve.above = 5000) {
       n     = nfeat - ncut
       
       cat('Features halved from', nfeat, 'to', n, '\n')
-      flush.console()
+      flush.console()                 
       
       pb = txtProgressBar(1, n, 1, style=3)
       
@@ -116,8 +128,8 @@ svmRFE <- function(X, k = 1, halve.above = 5000) {
     
     # Update feature list
     ranked.list[i.ranked:(i.ranked-ncut+1)] = i.surviving[ranking[1:ncut]]
-    i.ranked    = i.ranked - ncut
-    i.surviving = i.surviving[-ranking[1:ncut]]
+    i.ranked <- i.ranked - ncut
+    i.surviving <- i.surviving[-ranking[1:ncut]]
     
     setTxtProgressBar(pb, n-length(i.surviving))
     flush.console()
@@ -192,302 +204,8 @@ PlotErrors <- function(errors, errors2=NULL, no.info=0.5, ylim=range(c(errors, e
   abline(h=no.info, lty=3)
 }
 
+
 ### End of Function-01. 
-### ------------------------------------------------------------------------ ###
-
-
-### ------------------------------------------------------------------------ ###
-### Function-02. Metabee for metabolites selection.
-###  
-
-
-Metabee <- function(data, 
-                    label, 
-                    nfold=10,
-                    ranktop=100,
-                    vipvalue=1,
-                    Pvalue=0.05,
-                    upFC=1.3,
-                    downFC=0.6){
-  M_matrix <- data
-  
-  if(!is.null(nfold)){nfold <- nfold}
-  
-  if(is.null(nfold)){nfold <- 5}
-
-  ####translate the data
-  M_matrix1 <- apply(M_matrix, 1, as.character)
-  M_matrix2 <- apply(M_matrix1, 1, as.numeric)
-  
-  rownames(M_matrix2) <- rownames(M_matrix)
-  colnames(M_matrix2) <- colnames(M_matrix)
-  
-  M_matrix <- M_matrix2
-  
-  sam.lab<- label #facotr, "Con" is Control groups, and "tet" is experimental groups.
-  
-  c.p <- which(sam.lab == "Con")
-  e.p <- which(sam.lab == "tet")
-  
-  #########FC
-  
-  FC <-apply(M_matrix, 1, function(x) {mean(x[e.p])/mean(x[c.p])})
-  
-  FC <-as.data.frame(FC)
-  
-  FC$"log2(FC)"<-log2(FC$FC)
-  
-  FC$FeatureName<-rownames(FC)
-  
-  ##########log normalization
-  
-  M_matrix<-log2(M_matrix+0.1)
-  
-  M_matrix <-as.data.frame(t(M_matrix))
-  
-  input<- cbind(sam.lab, M_matrix)
-  
-  input <- as.data.frame(input)
-  
-  
-  ###############OPLSDA
-  
-  set.seed(1)
-  
-  oplsda = opls(input[,-1], sam.lab, predI = 1, orthoI = NA, crossvalI=5)
-  
-  sample.score <- oplsda@scoreMN %>%as.data.frame() %>% mutate(label = sam.lab,
-                                                               o1 = oplsda@orthoScoreMN[,1])
-  
-  vip <- getVipVn(oplsda)
-  
-  vip <- as.data.frame(vip)
-  
-  vip$FeatureName<-rownames(vip)
-  
-  ##########SVM-RFE#####
-
-  nrows <- nrow(input)
-  
-  set.seed(2)
-  
-  folds <- rep(1:nfold, len=nrows)[sample(nrows)]
-  
-  folds <- lapply(1:nfold, function(x) which(folds == x))
-  
-  set.seed(2)
-  
-  results <- lapply(folds, svmRFE.wrap, input, k = 10, halve.above = 100)
-  
-  top.features <- WriteFeatures(results, input, save = FALSE)
-  
-  #View(top.features)
-  
-  top.features$FeatureID<-1:nrow(top.features)
-  
-  deg.svm <- top.features$FeatureName
-  
-  deg.svm <- as.character(deg.svm)
-  
-  ##########Permutation#####
-  
-  all.genes <- colnames(M_matrix)
-  
-  gene.count <- length(all.genes)
-  
-  deg.count <- NULL
-  
-  i <- 0
-  
-  pb <- txtProgressBar(min = 0, max = gene.count, style = 3, char = "+")
-  
-  for (g in all.genes) {
-    
-    i <- i + 1
-    
-    setTxtProgressBar(pb, i)
-    
-    # Display the progress bar!
-    
-    tmp <- Summarize(get(g) ~ sam.lab, data = input, digits = 3)
-    
-    #print(tmp)
-    #boxplot(get(g) ~ sam.lab, data = input)
-    
-    deg.per <- try(independence_test(get(g) ~ sam.lab, 
-                                     data = input,
-                                     distribution = approximate(nresample = 10000)), 
-                   silent = FALSE)
-    
-    # deg.Z <- deg.per@statistic@teststatistic
-    deg.p <- deg.per@distribution@pvalue(deg.per@statistic@teststatistic)
-    
-    flush.console()
-    
-    # This variable, deg.count, stores all the differentially expressed genes.
-    
-    if (!is.na(deg.p) & deg.p < 1) deg.count <- c(deg.count, g,deg.p) else next
-    
-  }
-  
-  close(pb)
-  
-  
-  deg.count1<-matrix(deg.count,ncol=2,byrow = T)
-  
-  colnames(deg.count1)<-c("FeatureName","Pvalue")
-  
-  deg.count1<-as.data.frame(deg.count1)
-  
-  deg.count1$Pvalue<-as.vector(deg.count1$Pvalue)
-  
-  deg.count1$Pvalue<-as.numeric(deg.count1$Pvalue)
-  
-  #################
-  
-  
-  if(!is.null(ranktop)){ranktop <- ranktop}
-  
-  if(is.null(ranktop)){ranktop <- nrow(top.features)}
-  
-  top.features1<-top.features[1:ranktop,]
-  
-  top.features1<-merge(FC,top.features1)
-  
-  top.features1<-merge(top.features1,deg.count1)
-  
-  sumdata<-merge(top.features1,vip)
-  
-  sumdata<-sumdata[sumdata$vip>vipvalue & sumdata$Pvalue < Pvalue,]
-  #
-  sumdata<-sumdata[sumdata$FC>upFC | sumdata$FC<downFC,]
-  
-  results1 <- list()
-  
-  results1[[1]] <- sumdata
-  results1[[2]] <- deg.svm
-  
-  names(results1) <- c("result","rank")
-  
-  return(results1)
- 
-}
-
-
-### End of Function-02. 
-### ------------------------------------------------------------------------ ###
-
-
-### ------------------------------------------------------------------------ ###
-### Function-03. TOPSIS:Technique for Order Preference by Similarity to an Ideal Solution
-###  
-
-z_value <- function(x){
-  x / sqrt(sum(x^2))
-}
-
-
-dist <-function(x, std){
-  res <- c()
-  for ( i in 1 : nrow(x)) {
-    res[i] = sqrt(sum((unlist(x[i,-1])-std)^2))
-  }
-  
-  return(res)
-}
-
-
-dat_z <- dataAUC %>% dplyr::mutate(across(c(3:7), z_value))
-dat_z <- dat_z[,-1]
-
-z_max <- dat_z %>% summarise(across(c(2:6), max)) %>% unlist
-z_min <- dat_z %>% summarise(across(c(2:6), min)) %>% unlist
-
-du <- dist(dat_z, z_max)
-dn <- dist(dat_z, z_min)
-
-# calculate CI
-dat_z <- dat_z %>% add_column(du = du, dn = dn) %>% 
-  mutate(ci= dn/(du+dn)) %>%
-  arrange(-ci)
-
-
-### End of Function-03. 
-### ------------------------------------------------------------------------ ###
-
-
-### ------------------------------------------------------------------------ ###
-### Function-04. Other function. 
-###  
-
-#####Function-4.1 save pdf
-
-save_pdf <- function(x, filename, width=6, height=4) {
-  stopifnot(!missing(x))
-  stopifnot(!missing(filename))
-  pdf(filename, width=width, height=height)
-  grid::grid.newpage()
-  grid::grid.draw(x$gtable)
-  dev.off()
-}
-
-#####Function-4.2  Calculating with many distance metrics.
-dist_n <- function(x, mtd = "euclidean", p = NULL){
-  
-  if (!require("philentropy")) install.packages("philentropy")
-  
-  if (mtd == "maximum") {
-    dist(x = x,
-         method = mtd,
-         diag = FALSE,
-         upper = FALSE,
-         p = p)
-  }else{
-    # library(philentropy)
-    distance(x = x,
-             method = mtd,
-             p = p,
-             test.na = TRUE,
-             unit = "log",
-             est.prob = NULL,
-             use.row.names = TRUE,
-             as.dist.obj = TRUE,
-             diag = FALSE,
-             upper = FALSE)
-  }
-}
-
-#####Function-4.3  get annotation for heatmap.
-get_anno_for_heatmap2<-function(annocol,annorow=NULL,color=NULL,only.color=F){
-  require(plyr)
-  require(stringr)
-  if(is.null(color)){
-    require(RColorBrewer)
-    color=c(brewer.pal(12,"Set3"),brewer.pal(8,"Set2"),brewer.pal(9,"Set1"),brewer.pal(8,"Dark2"))
-  }
-  
-  annocolor=do.call(as.list,list(x=annocol))
-  annocolor=lapply(annocolor,function(x){if(is.factor(x)){x=levels(x);a=color[1:length(x)];names(a)=x;return(a)}else{x=unique(x);a=color[1:length(x)];names(a)=x;return(a)}})
-  if(!is.null(annorow)){
-    annocolor.row<-do.call(as.list,list(x=annorow))
-    annocolor.row=lapply(annocolor.row,function(x){if(is.factor(x)){x=levels(x);a=color[1:length(x)];names(a)=x;return(a)}else{x=unique(x);a=color[1:length(x)];names(a)=x;return(a)}})
-  }else{annocolor.row=NULL}
-  annocolor=c(annocolor,annocolor.row)
-  annocolor_col<-as.list(annocol)
-  annocolor_row<-as.list(annorow)
-  annocolor<-c(annocol,annorow)
-  annocolor<-lapply(annocolor,function(x){if(is.factor(x)){x=levels(x);return(x)}else{x=unique(x);return(x)}})
-  annocolor<-do.call(c,annocolor)
-  annocolor<-data.frame(var_name=as.factor(stringr::str_replace(names(annocolor),"[0-9]{1,}$","")),
-                        var=annocolor,
-                        color=color[1:length(annocolor)])
-  annocolor<-split(annocolor,annocolor$var_name)
-  annocolor<-lapply(annocolor,function(x){a=x$var;b=as.character(x$color);names(b)=a;return(b)})
-  
-  
-}
-
-### End of Function-04. 
 ### ------------------------------------------------------------------------ ###
 
 
